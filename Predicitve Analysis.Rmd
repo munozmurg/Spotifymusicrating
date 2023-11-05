@@ -1,0 +1,300 @@
+---
+title: "Predictive Analysis Competition Project"
+author: "German Munoz"
+date: "2023-04-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+Throughout the competition, I was able to test my abilities and knowledge acquired during this class. I had the chance to see firsthand the importance of data cleaning and understanding the data. I started the project by loading the libraries and looking at the data.
+```{r}
+#load libraries
+library(tidyverse)
+library(caret)
+library(ipred)
+library(rpart)
+library(randomForest)
+library(ranger)
+library(gbm)
+```
+
+```{r}
+#getting in the data into r, dat and test
+dat <- read_csv("~/Desktop/Columbia Univesity/SPRING 2023/APPLIED ANALYTICS FRAMEWORKS & METHODS I/Project/Competition Data/Music_data.csv")
+test <- read_csv("~/Desktop/Columbia Univesity/SPRING 2023/APPLIED ANALYTICS FRAMEWORKS & METHODS I/Project/Competition Data/scoringData.csv")
+
+
+```
+I asked myself "what is this data telling me?". My knowledge in music is very limited, but I do know that ratings in general are positive, so that was a starting point. I realized that I had to better understand what these metrics were telling for me to be able to accurately predict a rating. Some of the changes I tried for this report included changing the track duration metric from milliseconds to minutes. While this did not have an impact on the model, it helped me better understand the data. I also looked at Loudness, which ranges from -28 to 0.175. This variable was not telling me much, so I opted to scale it and see the effect it would have on the model. Scaling the variable would also reveal any underlying patterns or relationships that were not initially apparent. Scaling in this scenario did not provide any good insights and the variable did not change as I expected. I also created a model with the scale variable, but I did not see any improvements on the RMSE.
+
+```{r eval=FALSE}
+
+#Shift negative rating to 0 ratings
+dat$rating <- pmax(0, dat$rating)
+
+#Music duration is in milisecond. Transforming it to minutes may be better
+miliseconds_per_minute <- 1000 * 60
+
+#creating the new column
+dat<- dat%>%
+  mutate(track_minutes = track_duration / (miliseconds_per_minute))
+
+scaling <- dat%>%
+  mutate(scaled_loudness = scale(loudness))
+````
+
+I then decided to create a histogram to analyze clear patterns in music rating. I wanted to explore the distribution of ratings and see the relationship between variables. It was very clear from the graph that most of the song had very low rating, with a median of 37 and mean of 36. In general, the histogram had a normal distribution, but songs with good ratings are seldom. I thought I could down sample the data to have a more balanced distribution and improve the performance of the model. I tried to down sample using different method, but I didn’t accomplish what I was looking for in the model. At some point, I also tried crating a histogram for each genre, especially to see the distribution of rating per genre. Since there we so many genres in the data set, the system crashed.   
+
+```{r}
+#lets explore music rating variable
+dat$rating[1:10]
+summary(dat$rating)
+
+rating_viz <- dat%>%
+  group_by(rating)%>%
+  summarise(n_rating= n())
+
+ggplot(dat, aes(rating))+
+  geom_histogram(aes(y = ..density..), binwidth = 0.4, color = 'black', fill = 'white')+
+  geom_density(fill = 'blue', alpha = 0.5)+
+  coord_cartesian(xlim = c(0,100))
+
+#downsampling 
+table(dat$rating)
+
+down_sampling <- dat%>%
+  mutate(popular_songs = ifelse(rating>= 55, TRUE, FALSE ))
+
+mean(dat$rating)
+
+data_balanced <- downSample(x = down_sampling, y = down_sampling$popular_songs)
+table(data_balanced$x$rating)
+```
+
+Further, when looking at the other variables in the data set, I could see a clear trend, most of them were scaled and ranged from 0 to 1. To increase the accuracy of the model, I opted to turn this variable into binary variables. I tried using both variables in the model, binary and continuous and did not see a big increase in accuracy; however, in all the models uploaded to Kaggle I used to the binary variables.
+
+```{r}
+#creating binary variables 
+dat <- dat%>%
+  mutate(danceability_cat = ifelse(danceability <=0.5, 0, 1),
+         energy_cat = ifelse(energy <=0.5, 0, 1),
+         speechiness_cat = ifelse(speechiness <=0.5, 0, 1),
+         acousticness_cat = ifelse(acousticness <=0.5, 0, 1),
+         instrumentalness_scaled = (instrumentalness)^5,
+         liveness_cat = ifelse(liveness <=0.5, 0, 1),
+         valence_cat = ifelse(valence <=0.5, 0, 1)
+         )
+#adding new columns related to word patterns in songs or genres
+dat<- dat%>%
+  mutate(the_songs = ifelse(grepl(pattern = "The", x = dat$performer), 1,0),
+         miss_songs = ifelse(grepl(pattern = "miss", x = dat$song), 1,0),
+         mellow_gold = ifelse(grepl(pattern = "mellow gold", x = dat$genre), 1,0),
+         pop_songs = ifelse(grepl(pattern = "pop", x = dat$genre), 1,0),
+         dance_pop_songs = ifelse(grepl(pattern = "dance pop", x = dat$genre), 1,0),
+         pop_rap_songs = ifelse(grepl(pattern = "pop rap", x = dat$genre), 1,0),
+         post_teen_pop_songs = ifelse(grepl(pattern = "post-teen pop", x = dat$genre), 1,0),
+         rap_songs = ifelse(grepl(pattern = "rap", x = dat$genre), 1,0),
+         pop_rock_songs = ifelse(grepl(pattern = "pop rock", x = dat$genre), 1,0),
+         rock_songs = ifelse(grepl(pattern = "rock", x = dat$genre), 1,0),
+         hip_hop_songs = ifelse(grepl(pattern = "hip hop", x = dat$genre), 1,0),
+         funk_songs = ifelse(grepl(pattern = "funk", x = dat$genre), 1,0),
+         adult_standards_songs = ifelse(grepl(pattern = "adult standards", x = dat$genre), 1,0),
+         soft_frock = ifelse(grepl(pattern = "soft rock", x = dat$genre), 1,0),
+         brill_building = ifelse(grepl(pattern = "brill building pop", x = dat$genre), 1,0),
+         soul_songs = ifelse(grepl(pattern = "soul", x = dat$genre), 1,0),
+         motown_songs = ifelse(grepl(pattern = "motown", x = dat$genre), 1,0),
+         album_rock = ifelse(grepl(pattern = "album rock", x = dat$genre), 1,0),
+         classic_rock = ifelse(grepl(pattern = "classic rock", x = dat$genre), 1,0),
+         country= ifelse(grepl(pattern = "country", x = dat$genre), 1,0)
+         )
+
+
+
+
+```
+
+One of the ways I improved my model was by adding specific music genres to it. At first, I included just a few genres based on my personal knowledge of music. However, as I added more genres, I noticed that the Root Mean Squared Error (RMSE) of my model improved. To ensure that I was including relevant genres, I decided to clean up the genre column and create a table of unique genres. Then, I identified which songs belonged to each genre and calculated the total number of songs in each genre. This helped me make my model more robust and increased the number of data points.
+
+By organizing the genre data in this way, I was able to make more informed decisions about which genres to include in my model. It's important to ensure that each genre adds relevant and informative data to the model, rather than just being included arbitrarily. I also looked at the correlation of the genres with rating to have more information as which gender to include in the model.
+
+```{r eval=FALSE}
+#Cleaning the data columnns 
+data_NU <- dat
+data_NU$genre <- gsub("\\[|\\]|'", "", data_NU$genre)
+data_NU$genre <- trimws(data_NU$genre)
+
+#creating new columns for genre 
+unique_genres <- unique(unlist(strsplit(as.character(data_NU$genre), ", ")))
+genre_columns <- as.data.frame(matrix(0, nrow = nrow(data_NU), ncol = length(unique_genres)))
+colnames(genre_columns) <- unique_genres
+
+# Set values for each row based on its genre column
+for (i in 1:nrow(data_NU)) {
+  genres <- strsplit(data_NU$genre[i], ", ")[[1]]
+  if (!any(is.na(genres))) {
+    genre_columns[i, genres] <- 1
+  }
+}
+
+# Merge the genre columns with the original dataframe
+data_NU <- cbind(data_NU, genre_columns)
+
+# Use apply() to sum each column
+col_sums <- apply(genre_columns, 2, sum)
+
+# Sort the column sums in descending order and print the top 10
+sorted_sums <- sort(col_sums, decreasing=TRUE)
+print(head(sorted_sums, 30))
+
+rating_col <- dat$rating
+
+# Compute the correlation of each genre column to the rating column
+genre_corr <- apply(genre_columns, 2, function(x) cor(x, rating_col, use = "complete.obs"))
+
+# Sort the correlation values in descending order and print the top 10
+sorted_corr <- sort(genre_corr, decreasing = TRUE)
+print(head(sorted_corr, 10))
+
+```
+
+After having analyzed the genre columns, I added the genres with the largest sum of songs. This is when I saw the largest improvement to the RMSE. While doing this, I kept questioning myself if I was overfitting the data. It turned out that every time I added a new song, my metrics would improve. I also tried looking at the correlation between the parameters and the songs so that I could choose the best ones for my model. Further, I did some exploration tools learn through the course to better understand data trends.
+
+```{r eval = F}
+#lets look at the correlation between variables
+cor(dat[5, 7:19])
+
+#cretaing a graph to better see the correlation 
+ggcorrplot(cor(dat[,18:27]),
+           method = 'square',
+           type = 'lower',
+           show.diag = F,
+           colors = c('#e9a3c9', '#f7f7f7', '#a1d76a'))
+
+
+#Let's examine the time_signature
+dat$time_signature[1:10]
+unique(dat$time_signature)
+
+
+dat%>%
+  group_by(time_signature)%>%
+  count()
+# time signature may be categorical.
+#Now look in testing set 
+
+#how should we handle this? We could aggregate the categpry in some way. Call it "other"
+dat <- dat%>% mutate(time_sig_cat = "Four")
+dat <- dat %>% filter(time_signature == 3 %>% mutate(time_sig_cat = "Three"))
+
+dat$time_sig_Cat <- character(length = nrow(dat))
+dat$time_sig_cat[dat$time_signature == 4 ] <- "Four"
+dat$time_sig_cat[dat$time_signature == 3 ] <- "Three"
+dat$time_sig_cat[dat$time_signature %in% c(0,1,5) ] <- "Other"
+```
+Once the data looked cleaner, I started looking at the median, mean, and other parameters that could give me insights of the data. I looked at longer songs’ ratings, and created a new a variable that would classify if a song was long and its rating. This proved not to be effective.
+
+```{r eval=FALSE}
+#I want to see if longer or shorter songs have better rating compared to the median
+median_songlength <- median(dat$track_minutes)
+
+#Creating a categorical value between shorter and longer songs 
+dat <- dat%>%
+  mutate(songlength_median = ifelse(dat$track_minutes < median_songlength, 0, 1))
+
+#looking at comparisons by median
+dat%>% filter(songlength_median == 1)%>%summarise(mean_rating = mean(rating))
+dat%>% filter(songlength_median ==0)%>% summarise(mean_rating = mean(rating))
+```
+
+After all the data cleaning, I started building models. My first model was very simple, it only included some of the parameters given in the data set as well as some genres. I used linear regression and my RMSE was average compared to leaderboard. I started using some of the tools we learned in the class. I was very surprised when I created the subsets and created a regression tree and the variables with highest correlation but my RMSE decreased. I realized that using metrics such as genre and key words was in fact very effective. Because I saw such an increase to the RMSE I switched back to linear regression and regression trees back and forth.
+
+```{r eval=FALSE}
+
+#model1
+model <- lm(rating ~ acousticness_cat + track_explicit + track_minutes + instrumentalness_cat + valence_cat, data = dat)
+
+
+#Creating subsets to look at which variables fit the model best
+subsets <- regsubsets(rating~ time_signature + track_minutes +danceability_cat + energy_cat +speechiness_cat+acousticness_cat + instrumentalness_cat + liveness_cat + valence_cat + track_explicit + key + mode, data = dat)
+
+summary(subsets)
+
+
+#names(summary(subsets))
+subsets_measures <- data.frame(model=1:length(summary(subsets)$cp),
+                              cp=summary(subsets)$cp,
+                              bic=summary(subsets)$bic, 
+                              adjr2=summary(subsets)$adjr2)
+
+
+
+#regression tree 
+model8<- rpart(rating ~  track_minutes + danceability_cat + energy_cat + instrumentalness + speechiness_cat + valence_cat, data = dat, method = 'anova', control = rpart.control(cp = 0.001))
+summary(model8)
+
+```
+
+For my final models, I experimented with various techniques that turned out to be the most efficient. I used the random forest algorithm, setting ntrees to 500. I noticed that if I increased the number of trees too much, the model overfitted the data, causing my RMSE to increase. In addition, I utilized the control and grid functions to obtain the best set of parameters for my model. By employing the tuned random forest model, I was able to reduce my RMSE significantly and ultimately achieved an RMSE value of 14.9.
+
+```{r eval=FALSE}
+
+model10<- randomForest(rating ~  track_minutes + acousticness_cat + track_explicit + danceability_cat + energy_cat + instrumentalness + speechiness_cat + valence_cat + pop_songs + rock_songs + rap_songs + dance_pop_songs + pop_rap_songs+ pop_rock_songs + hip_hop_songs + post_teen_pop_songs + the_songs + miss_songs + funk_songs + adult_standards_songs, data = dat, ntree=500, mtry=3)
+summary(model10)
+
+
+```
+
+In conclusion, I feel that I gained an excellent understanding of data analytics. Through the project, I was able to utilize all of my data science skills, including data cleaning, analysis, and modeling. My most significant takeaway from this experience is that by tuning the tree and utilizing machine learning models, we can enhance predictions and achieve highly accurate models.
+
+```{r eval=FALSE}
+
+#final submission 
+set.seed(1031)
+model13 <- randomForest(rating ~  track_minutes + acousticness_cat + track_explicit + danceability_cat + energy_cat + instrumentalness + speechiness_cat + valence_cat + pop_songs + rock_songs + rap_songs + dance_pop_songs + pop_rap_songs+ pop_rock_songs + hip_hop_songs + post_teen_pop_songs + the_songs + miss_songs + funk_songs + adult_standards_songs + mellow_gold + brill_building + soul_songs + motown_songs + album_rock + classic_rock + country + soft_frock, 
+                        data = dat,
+                       mtry = model13_train$bestTune$mtry,
+                       ntree = 200)
+
+
+summary(model13)
+
+pred_model13 <- predict(model13)
+rmse_model13 <- sqrt(mean((pred_model13 - dat$rating)^2))
+rmse_model13
+
+
+#control for the datq 
+control <- trainControl(method = 'cv', number = 5)
+
+#creating grid 
+grid = expand.grid(mtry = 3:10)
+
+model13_train <- train(rating ~  track_minutes + acousticness_cat + track_explicit + danceability_cat + energy_cat + instrumentalness + speechiness_cat + valence_cat + pop_songs + rock_songs + rap_songs + dance_pop_songs + pop_rap_songs+ pop_rock_songs + hip_hop_songs + post_teen_pop_songs + the_songs + miss_songs + funk_songs + adult_standards_songs + mellow_gold + brill_building + soul_songs + motown_songs + album_rock + classic_rock + country, 
+                       data = dat,
+                       method = "rf",
+                       trControl = control,
+                       tuneGrid = grid,
+                       ntree = 200)
+
+model13_train
+
+#creating prediction of model 13 in the test data
+pred13 <- predict(model13, newdata = test, ntree = 200)
+
+#lets create the table 
+output13 <- cbind(test$id, pred13)
+
+#We now add names to the columns 
+colnames(output13) <- c("id", "rating")
+
+write.csv(output13, file = "~/Desktop/Columbia Univesity/SPRING 2023/APPLIED ANALYTICS FRAMEWORKS & METHODS I/Project/predictions13.csv", row.names = FALSE)
+
+
+
+```
+ 
